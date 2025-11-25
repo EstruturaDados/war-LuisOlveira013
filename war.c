@@ -1,98 +1,229 @@
-// ============================================================================
-//         PROJETO WAR ESTRUTURADO - DESAFIO DE CÓDIGO
-// ============================================================================
-//        
-// ============================================================================
-//
-// OBJETIVOS:
-// - Modularizar completamente o código em funções especializadas.
-// - Implementar um sistema de missões para um jogador.
-// - Criar uma função para verificar se a missão foi cumprida.
-// - Utilizar passagem por referência (ponteiros) para modificar dados e
-//   passagem por valor/referência constante (const) para apenas ler.
-// - Foco em: Design de software, modularização, const correctness, lógica de jogo.
-//
-// ============================================================================
+/* Exemplo completo demonstrando alocação dinâmica de Territórios e Missões,
+ * validação simples de ataques e a função liberarMemoria que libera tudo.
+ *
+ * Compile: gcc -Wall -Wextra -std=c11 -o war_example war_example.c
+ * Execute: ./war_example
+ */
 
-// Inclusão das bibliotecas padrão necessárias para entrada/saída, alocação de memória, manipulação de strings e tempo.
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
 
-// --- Constantes Globais ---
-// Definem valores fixos para o número de territórios, missões e tamanho máximo de strings, facilitando a manutenção.
+/* Estrutura que representa um território no jogo */
+typedef struct Territory {
+    char *name;                 // nome alocado dinamicamente
+    int owner;                  // id do jogador dono (0 = neutro / 1..n = jogadores)
+    int armies;                 // número de exércitos no território
+    int nNeighbors;             // número de vizinhos
+    struct Territory **neighbors; // array de ponteiros para territórios vizinhos
+} Territory;
 
-// --- Estrutura de Dados ---
-// Define a estrutura para um território, contendo seu nome, a cor do exército que o domina e o número de tropas.
+/* Estrutura que representa uma missão estratégica */
+typedef struct Mission {
+    char *description; // descrição alocada dinamicamente
+    int targetOwner;   // exemplo: missão relacionada a um dono específico
+} Mission;
 
-// --- Protótipos das Funções ---
-// Declarações antecipadas de todas as funções que serão usadas no programa, organizadas por categoria.
-// Funções de setup e gerenciamento de memória:
-// Funções de interface com o usuário:
-// Funções de lógica principal do jogo:
-// Função utilitária:
-
-// --- Função Principal (main) ---
-// Função principal que orquestra o fluxo do jogo, chamando as outras funções em ordem.
-int main() {
-    // 1. Configuração Inicial (Setup):
-    // - Define o locale para português.
-    // - Inicializa a semente para geração de números aleatórios com base no tempo atual.
-    // - Aloca a memória para o mapa do mundo e verifica se a alocação foi bem-sucedida.
-    // - Preenche os territórios com seus dados iniciais (tropas, donos, etc.).
-    // - Define a cor do jogador e sorteia sua missão secreta.
-
-    // 2. Laço Principal do Jogo (Game Loop):
-    // - Roda em um loop 'do-while' que continua até o jogador sair (opção 0) ou vencer.
-    // - A cada iteração, exibe o mapa, a missão e o menu de ações.
-    // - Lê a escolha do jogador e usa um 'switch' para chamar a função apropriada:
-    //   - Opção 1: Inicia a fase de ataque.
-    //   - Opção 2: Verifica se a condição de vitória foi alcançada e informa o jogador.
-    //   - Opção 0: Encerra o jogo.
-    // - Pausa a execução para que o jogador possa ler os resultados antes da próxima rodada.
-
-    // 3. Limpeza:
-    // - Ao final do jogo, libera a memória alocada para o mapa para evitar vazamentos de memória.
-
-    return 0;
+/* Cria e retorna um território com nome e dono fornecidos */
+Territory *criarTerritorio(const char *name, int owner, int armies) {
+    Territory *t = malloc(sizeof(Territory));
+    if (!t) {
+        perror("malloc Territory");
+        exit(EXIT_FAILURE);
+    }
+    t->name = malloc(strlen(name) + 1);
+    if (!t->name) {
+        perror("malloc name");
+        free(t);
+        exit(EXIT_FAILURE);
+    }
+    strcpy(t->name, name);
+    t->owner = owner;
+    t->armies = armies;
+    t->nNeighbors = 0;
+    t->neighbors = NULL;
+    return t;
 }
 
-// --- Implementação das Funções ---
+/* Adiciona um vizinho a um território (cresce dinamicamente o array) */
+void adicionarVizinho(Territory *t, Territory *vizinho) {
+    t->neighbors = realloc(t->neighbors, sizeof(Territory *) * (t->nNeighbors + 1));
+    if (!t->neighbors) {
+        perror("realloc neighbors");
+        exit(EXIT_FAILURE);
+    }
+    t->neighbors[t->nNeighbors++] = vizinho;
+}
 
-// alocarMapa():
-// Aloca dinamicamente a memória para o vetor de territórios usando calloc.
-// Retorna um ponteiro para a memória alocada ou NULL em caso de falha.
+/* Cria e retorna uma missão */
+Mission *criarMissao(const char *desc, int targetOwner) {
+    Mission *m = malloc(sizeof(Mission));
+    if (!m) {
+        perror("malloc Mission");
+        exit(EXIT_FAILURE);
+    }
+    m->description = malloc(strlen(desc) + 1);
+    if (!m->description) {
+        perror("malloc desc");
+        free(m);
+        exit(EXIT_FAILURE);
+    }
+    strcpy(m->description, desc);
+    m->targetOwner = targetOwner;
+    return m;
+}
 
-// inicializarTerritorios():
-// Preenche os dados iniciais de cada território no mapa (nome, cor do exército, número de tropas).
-// Esta função modifica o mapa passado por referência (ponteiro).
+/* Valida se um ataque é permitido:
+ * - jogador só pode atacar territórios que NÃO são dele
+ * - o território atacante deve ter pelo menos 2 exércitos (ex.: 1 fica para defesa)
+ */
+int validarAtaque(Territory *from, Territory *to, int playerId) {
+    if (!from || !to) return 0;
+    if (from->owner != playerId) {
+        // só pode atacar se for dono do território atacante
+        return 0;
+    }
+    if (to->owner == playerId) {
+        // não pode atacar um próprio território
+        return 0;
+    }
+    if (from->armies < 2) {
+        // precisa de ao menos 2 exércitos para realizar ataque (um fica defendendo)
+        return 0;
+    }
+    // opcional: validar se 'to' é vizinho de 'from'
+    int found = 0;
+    for (int i = 0; i < from->nNeighbors; ++i) {
+        if (from->neighbors[i] == to) { found = 1; break; }
+    }
+    if (!found) return 0;
+    return 1; // ataque válido
+}
 
-// liberarMemoria():
-// Libera a memória previamente alocada para o mapa usando free.
+/* Exemplo simples de resolução de combate (aleatório) */
+void resolverAtaque(Territory *from, Territory *to) {
+    // números aleatórios para exemplo (usar srand(time(NULL)) no main)
+    int attackRoll = rand() % 6 + 1; // 1..6
+    int defendRoll = rand() % 6 + 1; // 1..6
 
-// exibirMenuPrincipal():
-// Imprime na tela o menu de ações disponíveis para o jogador.
+    printf("Rolagem atacante: %d | defensor: %d\n", attackRoll, defendRoll);
+    if (attackRoll > defendRoll) {
+        // atacante vence: reduz defender, possivelmente conquista
+        to->armies -= 1;
+        if (to->armies <= 0) {
+            printf("Território %s conquistado!\n", to->name);
+            to->owner = from->owner;
+            // mover pelo menos 1 exército do atacante para o território conquistado
+            from->armies -= 1;
+            to->armies = 1;
+        } else {
+            printf("%s perde 1 exército (restam %d)\n", to->name, to->armies);
+        }
+    } else {
+        // defensor vence
+        from->armies -= 1;
+        printf("%s perde 1 exército (restam %d)\n", from->name, from->armies);
+    }
+}
 
-// exibirMapa():
-// Mostra o estado atual de todos os territórios no mapa, formatado como uma tabela.
-// Usa 'const' para garantir que a função apenas leia os dados do mapa, sem modificá-los.
+/* Função pedida: libera toda a memória alocada para territórios e missões.
+ *
+ * territories: array de ponteiros para Territory (size = nTerritories)
+ * missions: array de ponteiros para Mission (size = nMissions)
+ *
+ * Importante: a função assume que todos os ponteiros são válidos ou NULL.
+ */
+void liberarMemoria(Territory **territories, int nTerritories, Mission **missions, int nMissions) {
+    // Liberar cada território
+    if (territories) {
+        for (int i = 0; i < nTerritories; ++i) {
+            Territory *t = territories[i];
+            if (!t) continue;
+            // liberar string do nome
+            if (t->name) {
+                free(t->name);
+                t->name = NULL;
+            }
+            // liberar array de vizinhos (somente o array, não os territórios apontados,
+            // pois eles são liberados pela lista 'territories' principal)
+            if (t->neighbors) {
+                free(t->neighbors);
+                t->neighbors = NULL;
+            }
+            // finalmente liberar o struct Territory
+            free(t);
+            territories[i] = NULL;
+        }
+        // liberar o array que continha os ponteiros para Territory
+        free(territories);
+        territories = NULL;
+    }
 
-// exibirMissao():
-// Exibe a descrição da missão atual do jogador com base no ID da missão sorteada.
+    // Liberar cada missão
+    if (missions) {
+        for (int j = 0; j < nMissions; ++j) {
+            Mission *m = missions[j];
+            if (!m) continue;
+            if (m->description) {
+                free(m->description);
+                m->description = NULL;
+            }
+            free(m);
+            missions[j] = NULL;
+        }
+        // liberar o array que continha os ponteiros para Mission
+        free(missions);
+        missions = NULL;
+    }
 
-// faseDeAtaque():
-// Gerencia a interface para a ação de ataque, solicitando ao jogador os territórios de origem e destino.
-// Chama a função simularAtaque() para executar a lógica da batalha.
+    // Observação: não há retorno. Após chamar liberarMemoria, todos os dados
+    // alocados dinamicamente serão liberados.
+}
 
-// simularAtaque():
-// Executa a lógica de uma batalha entre dois territórios.
-// Realiza validações, rola os dados, compara os resultados e atualiza o número de tropas.
-// Se um território for conquistado, atualiza seu dono e move uma tropa.
+/* Exemplo de uso */
+int main(void) {
+    srand((unsigned)time(NULL)); // gerar números aleatórios (boa prática)
 
-// sortearMissao():
-// Sorteia e retorna um ID de missão aleatório para o jogador.
+    // --- Criar alguns territórios dinamicamente ---
+    int nTerritories = 3;
+    Territory **territories = malloc(sizeof(Territory *) * nTerritories);
+    if (!territories) { perror("malloc territories"); exit(EXIT_FAILURE); }
 
-// verificarVitoria():
-// Verifica se o jogador cumpriu os requisitos de sua missão atual.
-// Implementa a lógica para cada tipo de missão (destruir um exército ou conquistar um número de territórios).
-// Retorna 1 (verdadeiro) se a missão foi cumprida, e 0 (falso) caso contrário.
+    territories[0] = criarTerritorio("Amazônia", 1, 5);
+    territories[1] = criarTerritorio("Sertão", 2, 3);
+    territories[2] = criarTerritorio("Litoral", 0, 2);
 
-// limparBufferEntrada():
-// Função utilitária para limpar o buffer de entrada do teclado (stdin), evitando problemas com leituras consecutivas de scanf e getchar.
+    // criar vizinhanças (grafo simples)
+    adicionarVizinho(territories[0], territories[1]); // Amazônia <-> Sertão
+    adicionarVizinho(territories[1], territories[0]);
+    adicionarVizinho(territories[1], territories[2]); // Sertão <-> Litoral
+    adicionarVizinho(territories[2], territories[1]);
+
+    // --- Criar missões ---
+    int nMissions = 2;
+    Mission **missions = malloc(sizeof(Mission *) * nMissions);
+    if (!missions) { perror("malloc missions"); liberarMemoria(territories, nTerritories, NULL, 0); exit(EXIT_FAILURE); }
+
+    missions[0] = criarMissao("Conquistar 3 territórios da região Norte", 0);
+    missions[1] = criarMissao("Eliminar jogador 2", 2);
+
+    // --- Exemplo de validação e ataque ---
+    Territory *from = territories[0]; // Amazônia (owner=1)
+    Territory *to = territories[1];   // Sertão (owner=2)
+    int playerId = 1;
+
+    printf("Tentativa de ataque de %s para %s pelo jogador %d\n", from->name, to->name, playerId);
+    if (validarAtaque(from, to, playerId)) {
+        printf("Ataque válido. Resolvendo combate...\n");
+        resolverAtaque(from, to);
+    } else {
+        printf("Ataque inválido: só é permitido atacar territórios inimigos vizinhos com exércitos suficientes.\n");
+    }
+
+    // --- Final: liberar toda a memória antes de sair ---
+    liberarMemoria(territories, nTerritories, missions, nMissions);
+
+    printf("Memória liberada com sucesso. Encerrando.\n");
+    return 0;
+}
